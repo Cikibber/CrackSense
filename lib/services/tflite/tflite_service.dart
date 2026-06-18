@@ -111,70 +111,58 @@ class TfliteService {
 
     final stopwatch = Stopwatch()..start();
 
-    // ── Step 1: Preprocess the image ──────────────────────────────
-    // Uses bilinear resize + model-specific normalization:
-    // - ResNet50: BGR mean subtraction (matches training pipeline exactly)
-    // - Standard: [0,1] normalization (for BYOL/Baseline models)
-    final preprocessed = ImageUtils.preprocessForModel(
+    // ── Step 1: Preprocess with Test-Time Augmentation ────────────
+    // Matches the notebook's `tflite_predict_with_tta`: a simple resize to
+    // 224×224 then 4 orientation variants (original, flip-LR, flip-UD, rot90),
+    // each normalized for the active model:
+    // - ResNet50: BGR mean subtraction (output already softmax)
+    // - Standard: [0,1] normalization (output logits → softmax per variant)
+    final variants = ImageUtils.preprocessVariantsForTTA(
       imageBytes,
       inputWidth: inputWidth,
       inputHeight: inputHeight,
       mode: _preprocessMode,
     );
 
-    if (preprocessed == null) {
+    if (variants == null || variants.isEmpty) {
       return null;
     }
 
-    // ── DEBUG: Log preprocessed tensor samples ────────────────────
-    // Compare these values with notebook output to verify preprocessing
-    debugPrint('[TFLite DEBUG] Model: $_currentModelPath');
-    debugPrint('[TFLite DEBUG] Preprocess mode: $_preprocessMode');
-    debugPrint('[TFLite DEBUG] Tensor size: ${preprocessed.length}');
-    // First pixel (top-left corner)
-    if (preprocessed.length >= 3) {
-      debugPrint('[TFLite DEBUG] Pixel[0,0] = [${preprocessed[0].toStringAsFixed(4)}, ${preprocessed[1].toStringAsFixed(4)}, ${preprocessed[2].toStringAsFixed(4)}]');
+    // ── Step 2: Run inference on each variant and average probabilities ──
+    // Averaging the 4 per-variant probability vectors is what softens an
+    // over-confident single pass (~100%) into the notebook's distribution
+    // (e.g. 75% / 25% / 0%).
+    final List<double> probabilities = List.filled(numClasses, 0.0);
+
+    for (final preprocessed in variants) {
+      final input =
+          preprocessed.reshape([1, inputHeight, inputWidth, inputChannels]);
+      final output = List.generate(1, (_) => List.filled(numClasses, 0.0));
+      _interpreter!.run(input, output);
+
+      final rawOutput = output[0];
+      // ResNet50 already applies softmax in its output layer — use directly.
+      // Logit models (BYOL/Baseline) get softmax applied per variant.
+      final List<double> variantProbs =
+          _modelHasSoftmax ? rawOutput : _softmax(rawOutput);
+      for (int i = 0; i < numClasses; i++) {
+        probabilities[i] += variantProbs[i];
+      }
     }
-    // Center pixel
-    final centerIdx = (inputHeight ~/ 2 * inputWidth + inputWidth ~/ 2) * 3;
-    if (preprocessed.length > centerIdx + 2) {
-      debugPrint('[TFLite DEBUG] Pixel[center] = [${preprocessed[centerIdx].toStringAsFixed(4)}, ${preprocessed[centerIdx + 1].toStringAsFixed(4)}, ${preprocessed[centerIdx + 2].toStringAsFixed(4)}]');
+
+    // Average over the variants.
+    for (int i = 0; i < numClasses; i++) {
+      probabilities[i] /= variants.length;
     }
-
-    // ── Step 2: Reshape to input tensor [1, 224, 224, 3] ──────────
-    final input = preprocessed.reshape([1, inputHeight, inputWidth, inputChannels]);
-
-    // ── Step 3: Prepare output buffer [1, numClasses] ─────────────
-    final output = List.generate(
-      1,
-      (_) => List.filled(numClasses, 0.0),
-    );
-
-    // ── Step 4: Run inference ─────────────────────────────────────
-    _interpreter!.run(input, output);
 
     stopwatch.stop();
 
-    // ── Step 5: Post-process results ──────────────────────────────
-    final rawOutput = output[0];
+    // ── DEBUG: Log averaged probabilities ─────────────────────────
+    debugPrint('[TFLite DEBUG] Model: $_currentModelPath');
+    debugPrint('[TFLite DEBUG] TTA variants: ${variants.length}');
+    debugPrint('[TFLite DEBUG] Averaged probabilities: $probabilities');
 
-    // ── DEBUG: Log raw model output ───────────────────────────────
-    debugPrint('[TFLite DEBUG] Raw output: $rawOutput');
-    debugPrint('[TFLite DEBUG] Has softmax: $_modelHasSoftmax');
-
-    // Only apply softmax if the model outputs raw logits.
-    // ResNet50 model already has softmax activation in the output layer,
-    // so applying softmax again would distort the probabilities.
-    final List<double> probabilities;
-    if (_modelHasSoftmax) {
-      // Model output is already a probability distribution — use directly
-      probabilities = rawOutput;
-    } else {
-      // Model outputs raw logits — apply softmax to get probabilities
-      probabilities = _softmax(rawOutput);
-    }
-
-    // Find the class with highest confidence
+    // ── Step 3: Find the class with highest confidence ────────────
     int maxIndex = 0;
     double maxConfidence = probabilities[0];
     for (int i = 1; i < probabilities.length; i++) {
