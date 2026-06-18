@@ -67,21 +67,22 @@ class SeverityIndicator extends StatelessWidget {
   _SeverityConfig _getConfig(String severity) {
     switch (severity.toLowerCase()) {
       case 'vertical':
+      case 'vertikal':
         return _SeverityConfig(
-          color: AppColors.severityHairline,
-          backgroundColor: AppColors.severityHairlineBg,
+          color: AppColors.classVertikal,
+          backgroundColor: AppColors.classVertikalBg,
           icon: Icons.swap_vert_rounded,
         );
       case 'horizontal':
         return _SeverityConfig(
-          color: AppColors.severityStructural,
-          backgroundColor: AppColors.severityStructuralBg,
+          color: AppColors.classHorizontal,
+          backgroundColor: AppColors.classHorizontalBg,
           icon: Icons.swap_horiz_rounded,
         );
       case 'diagonal':
         return _SeverityConfig(
-          color: AppColors.severitySpalling,
-          backgroundColor: AppColors.severitySpallingBg,
+          color: AppColors.classDiagonal,
+          backgroundColor: AppColors.classDiagonalBg,
           icon: Icons.open_in_full_rounded,
         );
       default:

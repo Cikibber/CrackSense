@@ -70,24 +70,6 @@ class ClassificationResultCard extends StatelessWidget {
 
           const Divider(height: AppSpacing.xxl),
 
-          // Metadata row
-          Row(
-            children: [
-              _MetaItem(
-                icon: Icons.timer_outlined,
-                label: '${result.inferenceTimeMs}ms',
-              ),
-              const SizedBox(width: AppSpacing.xxl),
-              _MetaItem(
-                icon: Icons.precision_manufacturing_outlined,
-                label: result.confidencePercent,
-              ),
-            ],
-          ),
-
-          const SizedBox(height: AppSpacing.lg),
-          const Divider(height: AppSpacing.xxl),
-
           // Cause and Treatment
           _InfoSection(
             title: 'Penyebab',
@@ -158,36 +140,15 @@ class _ConfidenceBar extends StatelessWidget {
   Color get _barColor {
     switch (label.toLowerCase()) {
       case 'vertical':
-        return AppColors.severityHairline;
+      case 'vertikal':
+        return AppColors.classVertikal;
       case 'horizontal':
-        return AppColors.severityStructural;
+        return AppColors.classHorizontal;
       case 'diagonal':
-        return AppColors.severitySpalling;
+        return AppColors.classDiagonal;
       default:
         return AppColors.textSecondary;
     }
-  }
-}
-
-class _MetaItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-
-  const _MetaItem({
-    required this.icon,
-    required this.label,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 16, color: AppColors.textSecondary),
-        const SizedBox(width: 4),
-        Text(label, style: AppTypography.caption),
-      ],
-    );
   }
 }
 

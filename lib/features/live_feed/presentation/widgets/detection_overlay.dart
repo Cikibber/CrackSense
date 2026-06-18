@@ -78,11 +78,12 @@ class DetectionOverlay extends StatelessWidget {
   Color get _borderColor {
     switch (result.classification.toLowerCase()) {
       case 'vertical':
-        return AppColors.severityHairline;
+      case 'vertikal':
+        return AppColors.classVertikal;
       case 'horizontal':
-        return AppColors.severityStructural;
+        return AppColors.classHorizontal;
       case 'diagonal':
-        return AppColors.severitySpalling;
+        return AppColors.classDiagonal;
       default:
         return AppColors.textSecondary;
     }

@@ -38,6 +38,15 @@ class AppColors {
   static const Color severitySpalling = Color(0xFFDC2626);
   static const Color severitySpallingBg = Color(0xFFFECACA);
 
+  // ── Crack Class Colors (per classification) ──────────────────────
+  // Color-coded by crack orientation class rather than severity category.
+  static const Color classVertikal = Color(0xFF8B5CF6); // Purple
+  static const Color classVertikalBg = Color(0xFFEDE9FE);
+  static const Color classHorizontal = Color(0xFF3B82F6); // Blue
+  static const Color classHorizontalBg = Color(0xFFDBEAFE);
+  static const Color classDiagonal = Color(0xFFEAB308); // Yellow
+  static const Color classDiagonalBg = Color(0xFFFEF9C3);
+
   // ── Connection States ────────────────────────────────────────────
   static const Color connected = Color(0xFF22C55E);
   static const Color connecting = Color(0xFFF59E0B);

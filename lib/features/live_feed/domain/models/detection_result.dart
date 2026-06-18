@@ -23,6 +23,7 @@ class DetectionResult {
   int get severityLevel {
     switch (classification.toLowerCase()) {
       case 'vertical':
+      case 'vertikal':
         return 1;
       case 'horizontal':
         return 2;
@@ -37,6 +38,7 @@ class DetectionResult {
   String get cause {
     switch (classification.toLowerCase()) {
       case 'vertical':
+      case 'vertikal':
         return 'Muai-susut termal, penyusutan mortar, pergerakan struktur utama';
       case 'horizontal':
         return 'Kualitas mortar buruk, penyusutan plester, pergerakan antar lantai (interstory drift)';
@@ -51,6 +53,7 @@ class DetectionResult {
   String get treatment {
     switch (classification.toLowerCase()) {
       case 'vertical':
+      case 'vertikal':
       case 'horizontal':
       case 'diagonal':
         return 'V-cut';
