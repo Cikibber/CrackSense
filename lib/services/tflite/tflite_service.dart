@@ -1,5 +1,7 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:tflite_flutter/tflite_flutter.dart';
 
@@ -11,7 +13,7 @@ import '../../features/live_feed/domain/models/detection_result.dart';
 /// Handles:
 /// - Loading the .tflite model from app assets
 /// - Loading label definitions
-/// - Image preprocessing (decode → resize → normalize/mean-subtract)
+/// - Image preprocessing (decode → float32 resize → normalize/mean-subtract)
 /// - Running inference and returning structured DetectionResult
 /// - Resource cleanup
 class TfliteService {
@@ -33,16 +35,26 @@ class TfliteService {
   /// Available classification labels.
   List<String> get labels => List.unmodifiable(_labels);
 
-  /// Determines the appropriate preprocessing mode based on the model path.
+  /// Preprocessing mode based on the active model.
   ///
-  /// - Model C (ResNet50): uses BGR mean subtraction matching
-  ///   `tf.keras.applications.resnet.preprocess_input` from training.
-  /// - Model A (BYOL) & Model B (Baseline): use standard [0,1] normalization.
+  /// - Model C (ResNet50): BGR mean subtraction (trained with `resnet.preprocess_input`)
+  /// - Model A (BYOL) & Model B (Baseline): standard [0,1] normalization
+  ///
+  /// All models benefit from float32 bilinear resize (no uint8 rounding).
   PreprocessMode get _preprocessMode {
     if (_currentModelPath.contains('ResNet50')) {
       return PreprocessMode.resnet50;
     }
     return PreprocessMode.standard;
+  }
+
+  /// Whether the current model already includes softmax in its output layer.
+  ///
+  /// - Model C (ResNet50): has `Dense(n, activation='softmax')` → output is
+  ///   already probabilities, skip softmax
+  /// - Model A (BYOL) & B (Baseline): output raw logits → apply softmax
+  bool get _modelHasSoftmax {
+    return _currentModelPath.contains('ResNet50');
   }
 
   /// Initializes the TFLite interpreter and loads labels.
@@ -100,8 +112,8 @@ class TfliteService {
     final stopwatch = Stopwatch()..start();
 
     // ── Step 1: Preprocess the image ──────────────────────────────
-    // Uses the appropriate preprocessing mode for the active model:
-    // - ResNet50: BGR mean subtraction (matches training pipeline)
+    // Uses bilinear resize + model-specific normalization:
+    // - ResNet50: BGR mean subtraction (matches training pipeline exactly)
     // - Standard: [0,1] normalization (for BYOL/Baseline models)
     final preprocessed = ImageUtils.preprocessForModel(
       imageBytes,
@@ -112,6 +124,21 @@ class TfliteService {
 
     if (preprocessed == null) {
       return null;
+    }
+
+    // ── DEBUG: Log preprocessed tensor samples ────────────────────
+    // Compare these values with notebook output to verify preprocessing
+    debugPrint('[TFLite DEBUG] Model: $_currentModelPath');
+    debugPrint('[TFLite DEBUG] Preprocess mode: $_preprocessMode');
+    debugPrint('[TFLite DEBUG] Tensor size: ${preprocessed.length}');
+    // First pixel (top-left corner)
+    if (preprocessed.length >= 3) {
+      debugPrint('[TFLite DEBUG] Pixel[0,0] = [${preprocessed[0].toStringAsFixed(4)}, ${preprocessed[1].toStringAsFixed(4)}, ${preprocessed[2].toStringAsFixed(4)}]');
+    }
+    // Center pixel
+    final centerIdx = (inputHeight ~/ 2 * inputWidth + inputWidth ~/ 2) * 3;
+    if (preprocessed.length > centerIdx + 2) {
+      debugPrint('[TFLite DEBUG] Pixel[center] = [${preprocessed[centerIdx].toStringAsFixed(4)}, ${preprocessed[centerIdx + 1].toStringAsFixed(4)}, ${preprocessed[centerIdx + 2].toStringAsFixed(4)}]');
     }
 
     // ── Step 2: Reshape to input tensor [1, 224, 224, 3] ──────────
@@ -129,17 +156,30 @@ class TfliteService {
     stopwatch.stop();
 
     // ── Step 5: Post-process results ──────────────────────────────
-    final probabilities = output[0];
+    final rawOutput = output[0];
 
-    // Apply softmax if the model doesn't include it in the final layer
-    final softmaxProbs = _softmax(probabilities);
+    // ── DEBUG: Log raw model output ───────────────────────────────
+    debugPrint('[TFLite DEBUG] Raw output: $rawOutput');
+    debugPrint('[TFLite DEBUG] Has softmax: $_modelHasSoftmax');
+
+    // Only apply softmax if the model outputs raw logits.
+    // ResNet50 model already has softmax activation in the output layer,
+    // so applying softmax again would distort the probabilities.
+    final List<double> probabilities;
+    if (_modelHasSoftmax) {
+      // Model output is already a probability distribution — use directly
+      probabilities = rawOutput;
+    } else {
+      // Model outputs raw logits — apply softmax to get probabilities
+      probabilities = _softmax(rawOutput);
+    }
 
     // Find the class with highest confidence
     int maxIndex = 0;
-    double maxConfidence = softmaxProbs[0];
-    for (int i = 1; i < softmaxProbs.length; i++) {
-      if (softmaxProbs[i] > maxConfidence) {
-        maxConfidence = softmaxProbs[i];
+    double maxConfidence = probabilities[0];
+    for (int i = 1; i < probabilities.length; i++) {
+      if (probabilities[i] > maxConfidence) {
+        maxConfidence = probabilities[i];
         maxIndex = i;
       }
     }
@@ -150,7 +190,7 @@ class TfliteService {
     return DetectionResult(
       classification: classification,
       confidence: maxConfidence,
-      allConfidences: softmaxProbs,
+      allConfidences: probabilities,
       allLabels: List.from(_labels),
       timestamp: DateTime.now(),
       inferenceTimeMs: stopwatch.elapsedMilliseconds,
@@ -169,36 +209,13 @@ class TfliteService {
 
   /// Applies softmax normalization to raw logits.
   /// Converts raw model output into probability distribution summing to 1.0.
+  ///
+  /// Uses numerically stable computation (subtract max before exp).
   List<double> _softmax(List<double> logits) {
     final maxLogit = logits.reduce((a, b) => a > b ? a : b);
-    final exps = logits.map((l) => _safeExp(l - maxLogit)).toList();
+    final exps = logits.map((l) => math.exp(l - maxLogit)).toList();
     final sumExps = exps.reduce((a, b) => a + b);
     return exps.map((e) => e / sumExps).toList();
-  }
-
-  /// Safe exponential that clamps to avoid overflow.
-  double _safeExp(double x) {
-    if (x > 80) return double.maxFinite;
-    if (x < -80) return 0.0;
-    return x.isNaN ? 0.0 : _pow(x);
-  }
-
-  double _pow(double x) {
-    // Using Dart's built-in exp from dart:math
-    return 2.718281828459045 * x.abs() < 1
-        ? 1.0 + x
-        : _dartExp(x);
-  }
-
-  double _dartExp(double x) {
-    // Fallback to iterative approximation
-    double result = 1.0;
-    double term = 1.0;
-    for (int i = 1; i <= 20; i++) {
-      term *= x / i;
-      result += term;
-    }
-    return result;
   }
 
   /// Releases the interpreter and frees native resources.

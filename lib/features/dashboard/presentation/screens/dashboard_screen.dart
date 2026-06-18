@@ -463,9 +463,9 @@ class _ModelSelectorCard extends ConsumerWidget {
     final isInitializing = ref.watch(tfliteInitProvider).isLoading;
 
     final models = {
-      'assets/models/best_BYOL_model_float32.tflite': 'BYOL',
-      'assets/models/best_baseline_model_float32.tflite': 'Baseline',
-      'assets/models/crack_detector.tflite': 'Farel Model',
+      'assets/models/best_BYOL_model_float32.tflite': 'Model A - BYOL',
+      'assets/models/best_baseline_model_float32.tflite': 'Model B - Baseline',
+      'assets/models/cracksense_ResNet50.tflite': 'Model C - ResNet50',
     };
 
     return GlassCard(
